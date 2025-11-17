@@ -1,0 +1,41 @@
+# infra/runner/charts/r3a-sync/values.yaml
+image:
+  repository: r3a-runner
+  tag: latest
+  pullPolicy: IfNotPresent
+
+imagePullSecrets:
+  - name: r3a-regcred
+  
+serviceAccount:
+  create: false
+  name: r3a-sync-sa
+
+secretRefs:
+  db: r3a-db
+  binance: r3a-binance
+
+configMapRefs:
+  sync: r3a-sync-config
+
+waitDb:
+  enabled: true
+  image: postgres:16-alpine
+
+job:
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
+  startingDeadlineSeconds: 300
+  backoffLimit: 2
+  activeDeadlineSeconds: 900
+  ttlSecondsAfterFinished: 1800
+  suspend: false
+
+schedules:
+  m1Top: "* * * * *"
+  m1:   "* * * * *"
+  m15:  "*/15 * * * *"
+  h1:   "0 * * * *"
+  d1:   "0 2 * * *"
+

@@ -1,0 +1,72 @@
+# infra/runner/charts/r3a-maint/templates/cronjob.yaml
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "r3a-maint.fullname" . }}
+  labels:
+    {{- include "r3a-maint.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.schedule | quote }}
+  concurrencyPolicy: {{ .Values.concurrencyPolicy }}
+  successfulJobsHistoryLimit: {{ .Values.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ .Values.failedJobsHistoryLimit }}
+  startingDeadlineSeconds: {{ .Values.startingDeadlineSeconds }}
+  suspend: {{ .Values.suspend }}
+  jobTemplate:
+    spec:
+      backoffLimit: {{ .Values.backoffLimit }}
+      activeDeadlineSeconds: {{ .Values.activeDeadlineSeconds }}
+      ttlSecondsAfterFinished: {{ .Values.ttlSecondsAfterFinished }}
+      template:
+        metadata:
+          labels:
+            {{- include "r3a-maint.selectorLabels" . | nindent 12 }}
+        spec:
+          serviceAccountName: {{ include "r3a-maint.serviceAccountName" . }}
+          restartPolicy: Never
+
+          imagePullSecrets:
+            {{- range .Values.imagePullSecrets }}
+            - name: {{ .name }}
+            {{- end }}
+
+          {{- if .Values.waitDb.enabled }}
+          initContainers:
+            - name: wait-db
+              image: {{ .Values.waitDb.image }}
+              imagePullPolicy: IfNotPresent
+              envFrom:
+                - secretRef: { name: {{ .Values.secretRefs.db }} }
+              command: ["sh","-lc"]
+              args:
+                - |
+                  set -e
+                  echo "[INIT] aguardando Postgres..."
+                  DB_URL_PG="${DB_URL/postgresql+psycopg2:/postgresql:}"
+                  until pg_isready -d "$DB_URL_PG" >/dev/null 2>&1; do
+                    echo "[INIT][wait] DB indisponível; retry em 3s..."
+                    sleep 3
+                  done
+                  echo "[INIT] DB OK."
+          {{- end }}
+
+          containers:
+            - name: maint
+              image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy | default "IfNotPresent" }}
+              envFrom:
+                - secretRef: { name: {{ .Values.secretRefs.db }} }
+              command: ["/bin/sh","-lc"]
+              args: ["python /mnt/maint/maint.py"]
+              volumeMounts:
+                - name: maint-script
+                  mountPath: /mnt/maint
+              env:
+                - name: MAINT_MAX_OPS
+                  value: {{ .Values.env.MAINT_MAX_OPS | default "300" | quote }}
+
+          volumes:
+            - name: maint-script
+              configMap:
+                name: {{ include "r3a-maint.fullname" . }}-script
+                defaultMode: 0444

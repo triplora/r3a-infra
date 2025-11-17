@@ -1,0 +1,63 @@
+# DEV — simples, prático e explícito
+image:
+  repository: r3a-runner
+  tag: latest
+  pullPolicy: IfNotPresent
+
+schedule: "15 * * * *"  # roda no minuto 15 de cada hora
+
+env:
+  # Em DEV pode ser explícito. Em PROD prefira Secret.
+  DB_URL: "postgresql+psycopg2://change_user:change_pass@change_host:5432/trade"
+
+waitDb:
+  enabled: true
+  image: "postgres:16-alpine"
+
+# Reutiliza o mesmo SA do r3a-sync (ou troque aqui)
+serviceAccount:
+  create: false
+  name: r3a-sync-sa
+
+rbac:
+  create: false
+
+# Janela opcional de manutenção (gate dentro do pod)
+windowGating:
+  enabled: false
+  # Horas permitidas (UTC do container) — só efeito quando enabled=true
+  startHour: 2        # 02:00
+  endHour: 5          # 05:59
+
+# Recursos módicos
+resources:
+  requests:
+    cpu: "100m"
+    memory: "128Mi"
+  limits:
+    cpu: "500m"
+    memory: "512Mi"
+
+# Segurança leve para DEV
+podSecurityContext:
+  enabled: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+
+securityContext:
+  enabled: true
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false
+  runAsNonRoot: true
+
+# Afinidades/taints (opcional)
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Parâmetros do Job
+job:
+  concurrencyPolicy: "Forbid"
+  backoffLimit: 1
+  startingDeadlineSeconds: 300

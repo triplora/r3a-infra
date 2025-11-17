@@ -1,0 +1,39 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: r3a-sync-15m
+  namespace: r3a
+spec:
+  schedule: "*/15 * * * *"
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+          - name: runner
+            image: r3a-runner:latest
+            imagePullPolicy: IfNotPresent
+            envFrom:
+            - configMapRef: { name: r3a-sync-env }
+            - secretRef:    { name: r3a-binance }
+            workingDir: "/app"
+            command: ["bash","-lc"]
+            args:
+              - >
+                python infra/runner/runner_scripts/sync_ohlcv_job_v3.py
+                && python infra/runner/runner_scripts/health_check_pair_scanner.py
+            env:
+            - name: SYNC_SYMBOLS
+              value: ""
+            - name: SYNC_INTERVALS
+              value: "15m"
+            - name: AUTO_PERIOD
+              value: "true"
+            - name: SYNC_START
+              value: ""
+            - name: SYNC_END
+              value: ""

@@ -1,0 +1,34 @@
+# infra/runner/Dockerfile.r3a-runner
+FROM python:3.8-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# deps do SO + kubectl + jq + nc
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      build-essential ca-certificates curl bash coreutils grep sed jq netcat-traditional \
+  && curl -fsSL https://dl.k8s.io/release/$(curl -fsSL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl \
+       -o /usr/local/bin/kubectl \
+  && chmod +x /usr/local/bin/kubectl \
+  && kubectl version --client=true --output=yaml >/dev/null 2>&1 || true \
+  && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# requirements do runner
+COPY infra/runner/requirements.runner.txt /tmp/requirements.runner.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.runner.txt
+
+# código da aplicação (raiz -> /app)
+# (mantém os mesmos caminhos esperados no PYTHONPATH=/app)
+COPY core /app/core
+COPY app /app/app
+COPY utils /app/utils
+COPY config /app/config
+COPY infra/runner/runner_scripts /app/infra/runner/runner_scripts
+
+# opcional: se você usa quaisquer arquivos .py soltos na raiz:
+# COPY trading_pipeline_v11.py /app/
+
+# entrypoint padrão fica por conta dos CronJobs (command/args do k8s)

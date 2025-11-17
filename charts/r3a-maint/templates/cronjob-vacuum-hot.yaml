@@ -1,0 +1,47 @@
+# infra/runner/charts/r3a-maint/templates/cronjob-vacuum-hot.yaml
+{{- $vh := .Values.vacuumHot | default (dict) -}}
+{{- if ($vh.enabled | default false) }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "r3a-maint.fullname" . }}-vacuum-hot
+  labels:
+    {{- include "r3a-maint.labels" . | nindent 4 }}
+spec:
+  schedule: {{ ($vh.schedule | default "10 * * * *") | quote }}
+  concurrencyPolicy: {{ $vh.concurrencyPolicy | default "Forbid" }}
+  successfulJobsHistoryLimit: {{ $vh.successfulJobsHistoryLimit | default 1 }}
+  failedJobsHistoryLimit: {{ $vh.failedJobsHistoryLimit | default 2 }}
+  startingDeadlineSeconds: {{ $vh.startingDeadlineSeconds | default 300 }}
+  suspend: {{ $vh.suspend | default false }}
+  jobTemplate:
+    spec:
+      backoffLimit: {{ $vh.backoffLimit | default 0 }}
+      activeDeadlineSeconds: {{ $vh.activeDeadlineSeconds | default 1200 }}
+      ttlSecondsAfterFinished: {{ $vh.ttlSecondsAfterFinished | default 1800 }}
+      template:
+        metadata:
+          labels:
+            {{- include "r3a-maint.selectorLabels" . | nindent 12 }}
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: vacuum-hot
+              image: postgres:16-alpine
+              imagePullPolicy: IfNotPresent
+              envFrom:
+                - secretRef:
+                    name: {{ .Values.secretRefs.db | default "r3a-db" }}
+              command: ["sh","-lc"]
+              args:
+                - |
+                  set -e
+                  DB_URL_PG="${DB_URL/postgresql+psycopg2:/postgresql:}"
+                  if [ "{{ $vh.analyzeOnly | default true }}" = "true" ]; then
+                    echo "[VACUUM] ANALYZE r3a.ohlcv_partitioned"
+                    psql "$DB_URL_PG" -v ON_ERROR_STOP=1 -c "ANALYZE r3a.ohlcv_partitioned;"
+                  else
+                    echo "[VACUUM] VACUUM (ANALYZE) r3a.ohlcv_partitioned"
+                    psql "$DB_URL_PG" -v ON_ERROR_STOP=1 -c "VACUUM (ANALYZE) r3a.ohlcv_partitioned;"
+                  fi
+{{- end }}

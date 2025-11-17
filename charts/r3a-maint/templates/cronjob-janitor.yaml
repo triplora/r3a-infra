@@ -1,0 +1,88 @@
+# infra/runner/charts/r3a-maint/templates/cronjob-janitor.yaml
+{{- $jn := .Values.janitor | default (dict) -}}
+{{- if ($jn.enabled | default false) }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "r3a-maint.fullname" . }}-janitor
+  labels:
+    {{- include "r3a-maint.labels" . | nindent 4 }}
+spec:
+  schedule: {{ ($jn.schedule | default "*/5 * * * *") | quote }}
+  concurrencyPolicy: {{ $jn.concurrencyPolicy | default "Forbid" }}
+  successfulJobsHistoryLimit: {{ $jn.successfulJobsHistoryLimit | default 1 }}
+  failedJobsHistoryLimit: {{ $jn.failedJobsHistoryLimit | default 2 }}
+  startingDeadlineSeconds: {{ $jn.startingDeadlineSeconds | default 120 }}
+  suspend: {{ $jn.suspend | default false }}
+  jobTemplate:
+    spec:
+      backoffLimit: {{ $jn.backoffLimit | default 0 }}
+      activeDeadlineSeconds: {{ $jn.activeDeadlineSeconds | default 240 }}
+      ttlSecondsAfterFinished: {{ $jn.ttlSecondsAfterFinished | default 900 }}
+      template:
+        metadata:
+          labels:
+            {{- include "r3a-maint.selectorLabels" . | nindent 12 }}
+        spec:
+          serviceAccountName: {{ include "r3a-maint.serviceAccountName" . }}
+          restartPolicy: Never
+          imagePullSecrets:
+            {{- range (.Values.imagePullSecrets | default (list)) }}
+            - name: {{ .name }}
+            {{- end }}
+          containers:
+            - name: pods-janitor
+              image: {{ $jn.image | default (printf "%s:%s" .Values.image.repository .Values.image.tag) }}
+              imagePullPolicy: {{ $jn.imagePullPolicy | default (.Values.image.pullPolicy | default "IfNotPresent") }}
+              command: ["/bin/sh","-lc"]
+              args:
+                - |
+                  set -euo
+                  NS="{{ $jn.targetNamespace | default .Release.Namespace }}"
+                  LIMIT="{{ $jn.deleteAfterSeconds | default 900 }}"
+                  echo "[JANITOR] alvo namespace=$NS deleteAfterSeconds=$LIMIT"
+                  now_epoch="$(date +%s)"
+                  pods="$(kubectl -n "$NS" get pods \
+                    --field-selector=status.phase!=Running,status.phase!=Succeeded \
+                    -o jsonpath='{range .items[*]}{.metadata.name}{" "}{end}')"
+                  for pod in $pods; do
+                    [ -z "$pod" ] && continue
+                    start="$(kubectl -n "$NS" get pod "$pod" -o jsonpath='{.status.startTime}' 2>/dev/null || true)"
+                    [ -z "$start" ] && continue
+                    start_epoch="$(date -d "$start" +%s 2>/dev/null || echo 0)"
+                    [ "$start_epoch" -eq 0 ] && continue
+                    age="$(( now_epoch - start_epoch ))"
+                    phase="$(kubectl -n "$NS" get pod "$pod" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")"
+                    reason="$(kubectl -n "$NS" get pod "$pod" -o jsonpath='{.status.reason}' 2>/dev/null || echo "")"
+                    init_reason="$(kubectl -n "$NS" get pod "$pod" -o jsonpath='{.status.initContainerStatuses[0].state.waiting.reason}' 2>/dev/null || echo "")"
+                    cont_reason="$(kubectl -n "$NS" get pod "$pod" -o jsonpath='{.status.containerStatuses[0].state.waiting.reason}' 2>/dev/null || echo "")"
+                    is_protected=0
+{{- range $i, $sel := ($jn.protectedSelectors | default (list)) }}
+                    if kubectl -n "$NS" get pod "$pod" -l '{{ $sel }}' --field-selector=metadata.name="$pod" -o name >/dev/null 2>&1; then
+                      is_protected=1
+                    fi
+{{- end }}
+                    if [ "$is_protected" -eq 1 ]; then
+                      echo "[JANITOR] skip protegido: $pod ($phase/${reason})"
+                      continue
+                    fi
+                    bad_state=0
+                    [ "$phase" = "Failed" ] && bad_state=1
+                    [ "$init_reason" = "Init:Error" ] && bad_state=1
+                    [ "$init_reason" = "CrashLoopBackOff" ] && bad_state=1
+                    [ "$cont_reason" = "ImagePullBackOff" ] && bad_state=1
+                    [ "$cont_reason" = "ErrImagePull" ] && bad_state=1
+                    [ "$cont_reason" = "CreateContainerConfigError" ] && bad_state=1
+                    if [ "$bad_state" -eq 1 ] && [ "$age" -ge "$LIMIT" ]; then
+                      echo "[JANITOR] deletando pod $pod (phase=$phase reason=${reason:-$init_reason/$cont_reason} age=${age}s)"
+                      kubectl -n "$NS" delete pod "$pod" --grace-period=0 --force >/dev/null 2>&1 || true
+                    else
+                      echo "[JANITOR] mantendo pod $pod (phase=$phase reason=${reason:-$init_reason/$cont_reason} age=${age}s < ${LIMIT}s)"
+                    fi
+                  done
+              env:
+                - name: TZ
+                  value: America/Sao_Paulo
+              resources:
+                {{- toYaml ($jn.resources | default (dict)) | nindent 16 }}
+{{- end }}

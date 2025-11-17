@@ -1,0 +1,69 @@
+# infra/runner/charts/r3a-maint/templates/cronjob-refresh-lastts.yaml
+{{- $rf := .Values.refreshLastTs | default (dict) -}}
+{{- if ($rf.enabled | default false) }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "r3a-maint.fullname" . }}-refresh-lastts
+  labels: {{- include "r3a-maint.labels" . | nindent 4 }}
+spec:
+  schedule: {{ ($rf.schedule | default "1-59/2 * * * *") | quote }}
+  concurrencyPolicy: {{ $rf.concurrencyPolicy | default "Forbid" }}
+  successfulJobsHistoryLimit: {{ $rf.successfulJobsHistoryLimit | default 1 }}
+  failedJobsHistoryLimit: {{ $rf.failedJobsHistoryLimit | default 2 }}
+  startingDeadlineSeconds: {{ $rf.startingDeadlineSeconds | default 120 }}
+  suspend: {{ $rf.suspend | default false }}
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: {{ $rf.activeDeadlineSeconds | default 180 }}
+      ttlSecondsAfterFinished: {{ $rf.ttlSecondsAfterFinished | default 600 }}
+      template:
+        metadata:
+          labels: {{- include "r3a-maint.selectorLabels" . | nindent 12 }}
+        spec:
+          restartPolicy: Never
+          imagePullSecrets:
+            {{- range (.Values.imagePullSecrets | default (list)) }}
+            - name: {{ .name }}
+            {{- end }}
+          containers:
+            - name: refresh-lastts
+              image: postgres:16-alpine
+              imagePullPolicy: IfNotPresent
+              envFrom:
+                - secretRef: { name: {{ .Values.secretRefs.db | default "r3a-db" }} }
+              command: ["sh","-lc"]
+              args:
+                - |
+                  set -euo pipefail
+                  DB_URL_PG="${DB_URL/postgresql+psycopg2:/postgresql:}"
+
+                  # 1) tenta lock (singleton hard)
+                  got="$(psql "$DB_URL_PG" -Atqc "select r3a_util.acquire_lock('r3a-maint','refresh-lastts');" || echo "f")"
+                  if [ "$got" != "t" ]; then
+                    echo "[REFRESH] lock indisponível; outro job está rodando. saindo."
+                    exit 0
+                  fi
+                  # garante release do lock em qualquer saída
+                  _release() { psql "$DB_URL_PG" -Atqc "select r3a_util.release_lock('r3a-maint','refresh-lastts');" >/dev/null 2>&1 || true; }
+                  trap _release EXIT
+
+                  # timeouts defensivos:
+                  psql "$DB_URL_PG" -v ON_ERROR_STOP=1 -c "SET LOCAL lock_timeout='3s'; SET LOCAL statement_timeout='60s'; SET LOCAL max_parallel_workers_per_gather=0;" >/dev/null 2>&1 || true
+
+                  # 2) executa a atualização
+                  cat > /tmp/refresh.sql <<'SQL'
+                  WITH latest AS (
+                    SELECT coin_id,"interval", max("timestamp") AS mx
+                    FROM r3a.ohlcv_partitioned
+                    WHERE "timestamp" >= NOW() - INTERVAL '{{ $rf.lookback | default "3 days" }}'
+                    GROUP BY coin_id, "interval"
+                  )
+                  INSERT INTO r3a_util.last_ts_by_coin_interval (coin_id,"interval",last_ts)
+                  SELECT coin_id,"interval",mx FROM latest
+                  ON CONFLICT (coin_id,"interval")
+                  DO UPDATE SET last_ts = GREATEST(r3a_util.last_ts_by_coin_interval.last_ts, EXCLUDED.last_ts);
+                  SQL
+                  psql "$DB_URL_PG" -v ON_ERROR_STOP=1 -f /tmp/refresh.sql
+{{- end }}

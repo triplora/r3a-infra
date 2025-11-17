@@ -1,0 +1,87 @@
+# DEV — simples e direto para ambiente local/de teste
+image:
+  repository: r3a-runner
+  tag: latest
+  pullPolicy: IfNotPresent
+
+# Schedules dos CronJobs
+schedule:
+  oneMinute: "* * * * *"        # r3a-sync-1m
+  oneMinuteTop: "*/1 * * * *"   # r3a-sync-1m-top
+  fifteenMinutes: "*/15 * * * *" # r3a-sync-15m
+  oneHour: "0 * * * *"          # r3a-sync-1h
+  oneDay: "0 2 * * *"           # r3a-sync-1d
+
+# Variáveis de ambiente comuns ao runner e initContainer
+env:
+  PYTHONPATH: "/app"
+  # Para DEV, pode ficar explícito. Em PROD, prefira Secret (veja values.prod.yaml).
+  DB_URL: "postgresql+psycopg2://change_user:change_pass@change_host:5432/trade"
+  AUTO_PERIOD_DATE: "true"
+  # Valor default; cada template de CronJob pode sobrescrever internamente se quiser
+  SYNC_INTERVALS: "1m"
+
+# Binance: em DEV pode setar direto
+binance:
+  useSecret: false
+  apiKey: ""
+  apiSecret: ""
+  secretName: ""  # ignorado quando useSecret=false
+
+# Espera o Postgres responder antes do runner
+waitDb:
+  enabled: true
+  image: "postgres:16-alpine"
+
+# Caso precise resolver host externo via /etc/hosts (opcional para DEV)
+hostAliases: []
+#  - ip: "192.168.0.70"
+#    hostnames:
+#      - "ragnarak.r3a.offline"
+
+# ServiceAccount / RBAC
+serviceAccount:
+  create: true
+  name: r3a-sync-sa
+
+rbac:
+  create: true
+
+# Scheduling/opções de cluster (vazios em DEV)
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Segurança padrão em DEV (não travamos tudo para facilitar)
+podSecurityContext:
+  enabled: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+
+securityContext:
+  enabled: true
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false
+  runAsNonRoot: true
+
+# Recursos modestos para DEV
+resources:
+  requests:
+    cpu: "100m"
+    memory: "256Mi"
+  limits:
+    cpu: "500m"
+    memory: "512Mi"
+
+# Comportamento de Job (seus templates já aplicam; aqui fica como referência se você ler do .Values)
+# limpa Jobs + Pods 2 min após terminar
+job:
+  ttlSecondsAfterFinished: 120
+  backoffLimit: 2
+  activeDeadlineSeconds: 120
+  startingDeadlineSeconds: 60
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
+  concurrencyPolicy: Forbid
+  suspend: false

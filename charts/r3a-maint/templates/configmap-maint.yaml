@@ -1,0 +1,44 @@
+# infra/runner/charts/r3a-maint/templates/configmap-maint.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "r3a-maint.fullname" . }}-script
+  labels:
+    {{- include "r3a-maint.labels" . | nindent 4 }}
+data:
+  maint.py: |-
+    import os, psycopg2, time
+    from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT as AC
+    
+    MAX_OPS = int(os.getenv("MAINT_MAX_OPS", "300"))
+    
+    dsn = os.environ["DB_URL"].replace("postgresql+psycopg2","postgresql")
+    conn = psycopg2.connect(dsn)
+    conn.set_isolation_level(AC)
+    cur = conn.cursor()
+    
+    # lock global de manutenção (evita 2 maint em paralelo)
+    cur.execute("SELECT r3a_util.acquire_lock(%s,%s);", ("r3a-maint","ddl"))
+    ok = cur.fetchone()[0]
+    if not ok:
+        print("[MAINT] outro maint ativo — saindo.")
+        cur.close(); conn.close()
+        raise SystemExit(0)
+    
+    try:
+        # a função tem somente DOIS parâmetros: (pages_per_range, fillfactor)
+        cur.execute("SELECT leaf, kind, sql FROM r3a_util.generate_index_sql(%s,%s);", (128, 90))
+        ops = cur.fetchall()
+        # aplica limite no Python
+        if MAX_OPS and MAX_OPS > 0:
+            ops = ops[:MAX_OPS]
+        print(f"[MAINT] {len(ops)} operações")
+        for leaf, kind, sql in ops:
+            print(f"[MAINT] {kind} -> {leaf}")
+            cur.execute(sql)
+    finally:
+        cur.execute("SELECT r3a_util.release_lock(%s,%s);", ("r3a-maint","ddl"))
+        cur.close()
+        conn.close()
+    
+    print("[MAINT] done")

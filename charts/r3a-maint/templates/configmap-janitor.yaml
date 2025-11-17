@@ -1,0 +1,92 @@
+# infra/runner/charts/r3a-maint/templates/configmap-janitor.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "r3a-maint.fullname" . }}-janitor-script
+  labels:
+    {{- include "r3a-maint.labels" . | nindent 4 }}
+data:
+  janitor.py: |-
+    import os, time
+    from datetime import datetime, timezone
+    from kubernetes import client, config
+
+    NS = os.getenv("TARGET_NAMESPACE", "r3a")
+    DELETE_AFTER = int(os.getenv("DELETE_AFTER_SECONDS", "900"))
+    PROTECTED = [s.strip() for s in os.getenv("PROTECTED_SELECTORS", "").split(",") if s.strip()]
+
+    def pod_age_seconds(pod):
+        st = pod.status.start_time
+        if not st: return 0
+        return int((datetime.now(timezone.utc) - st).total_seconds())
+
+    def protected_pod(pod):
+        labels = pod.metadata.labels or {}
+        lstr = ",".join([f"{k}={v}" for k,v in labels.items()])
+        return any(sel in lstr for sel in PROTECTED)
+
+    def is_bad_phase(pod):
+        phase = (pod.status.phase or "").lower()
+        return phase in ("failed","unknown") or "error" in phase
+
+    def is_init_error(pod):
+        s = pod.status
+        if not s or not s.init_container_statuses: return False
+        for cs in s.init_container_statuses:
+            st = cs.state
+            if st and st.terminated and st.terminated.exit_code != 0: return True
+            if st and st.waiting and st.waiting.reason and "error" in st.waiting.reason.lower(): return True
+        return False
+
+    def is_image_pull_backoff(pod):
+        s = pod.status
+        if not s or not s.container_statuses: return False
+        for cs in s.container_statuses:
+            st = cs.state
+            if st and st.waiting and st.waiting.reason and "imagepullbackoff" in st.waiting.reason.lower():
+                return True
+        return False
+
+    def main():
+        print(f"[JANITOR] alvo namespace={NS} deleteAfterSeconds={DELETE_AFTER}")
+        try:
+            config.load_incluster_config()
+        except Exception:
+            config.load_kube_config()
+
+        v1 = client.CoreV1Api()
+        batch = client.BatchV1Api()
+
+        # Pods
+        pods = v1.list_namespaced_pod(NS).items
+        deleted = 0
+        for p in pods:
+            if protected_pod(p): continue
+            age = pod_age_seconds(p)
+            if age < DELETE_AFTER: continue
+            if is_bad_phase(p) or is_init_error(p) or is_image_pull_backoff(p):
+                try:
+                    v1.delete_namespaced_pod(p.metadata.name, NS)
+                    deleted += 1
+                    print(f"[JANITOR] deleted pod {p.metadata.name} (age={age}s)")
+                except Exception as e:
+                    print(f"[JANITOR][warn] pod {p.metadata.name}: {e}")
+
+        # Jobs completados há muito tempo (fallback ao TTL)
+        jobs = batch.list_namespaced_job(NS).items
+        for j in jobs:
+            conds = j.status.conditions or []
+            done = any(c.type in ("Complete","Failed") and c.status == "True" for c in conds)
+            if done and j.status.completion_time:
+                age = int((datetime.now(timezone.utc) - j.status.completion_time).total_seconds())
+                if age >= DELETE_AFTER:
+                    try:
+                        batch.delete_namespaced_job(j.metadata.name, NS, propagation_policy="Background")
+                        print(f"[JANITOR] deleted job {j.metadata.name} (age={age}s)")
+                    except Exception as e:
+                        print(f"[JANITOR][warn] job {j.metadata.name}: {e}")
+
+        print(f"[JANITOR] done (pods_deleted={deleted})")
+
+    if __name__ == "__main__":
+        main()

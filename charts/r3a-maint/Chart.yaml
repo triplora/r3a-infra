@@ -1,0 +1,6 @@
+apiVersion: v2
+name: r3a-maint
+description: Manutenção do banco (índices/FF) + Janitor de Pods/Jobs
+type: application
+version: 0.2.0
+appVersion: "1.0.0"

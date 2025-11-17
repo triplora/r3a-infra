@@ -1,0 +1,76 @@
+# infra/runner/charts/r3a-maint/values.yaml
+
+image:
+  repository: ghcr.io/triplora/r3a-runner
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []   # ex.: [{ name: r3a-regcred }]
+
+serviceAccount:
+  create: false
+  name: r3a-sync-sa
+
+secretRefs:
+  db: r3a-db
+
+waitDb:
+  enabled: true
+  image: postgres:16-alpine
+
+# Cron principal (maint)
+schedule: "15 * * * *"
+concurrencyPolicy: Forbid
+successfulJobsHistoryLimit: 1
+failedJobsHistoryLimit: 2
+startingDeadlineSeconds: 300
+backoffLimit: 1
+activeDeadlineSeconds: 1200
+ttlSecondsAfterFinished: 1800
+suspend: false
+
+janitor:
+  enabled: false           # default off para lint
+  schedule: "*/5 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
+  startingDeadlineSeconds: 120
+  backoffLimit: 0
+  activeDeadlineSeconds: 240
+  ttlSecondsAfterFinished: 900
+  suspend: false
+  image: ""                # herda image.repository:tag
+  imagePullPolicy: ""
+  targetNamespace: ""
+  deleteAfterSeconds: 900
+  protectedSelectors: []
+
+refreshLastTs:
+  enabled: false           # default off para lint
+  schedule: "1-59/2 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
+  startingDeadlineSeconds: 120
+  backoffLimit: 0
+  activeDeadlineSeconds: 180
+  ttlSecondsAfterFinished: 600
+  suspend: false
+  lookback: "3 days"
+
+vacuumHot:
+  enabled: false           # default off para lint
+  schedule: "10 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
+  startingDeadlineSeconds: 300
+  backoffLimit: 0
+  activeDeadlineSeconds: 1200
+  ttlSecondsAfterFinished: 1800
+  suspend: false
+  analyzeOnly: true
+
+env:
+  MAINT_MAX_OPS: "300"

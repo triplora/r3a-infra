@@ -1,0 +1,40 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: r3a-remove-taints
+  namespace: r3a
+spec:
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      serviceAccountName: r3a-node-admin
+      restartPolicy: Never
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: ""
+      tolerations:
+        - key: "node-role.kubernetes.io/control-plane"
+          operator: "Exists"
+          effect: "NoSchedule"
+      containers:
+        - name: kubectl
+          image: bitnami/kubectl:1.28
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: NODE_LIST
+              value: "worker-node-1"
+            - name: TAINTS_TO_REMOVE
+              value: "dedicated"   # pode colocar mais chaves separadas por vírgula
+          command: ["/bin/sh","-lc"]
+          args:
+            - |
+              set -euo pipefail
+              IFS=',' read -r -a NODES <<< "${NODE_LIST}"
+              for n in "${NODES[@]}"; do
+                for key in ${TAINTS_TO_REMOVE//,/ }; do
+                  echo "[untaint] ${n} ${key}-"
+                  kubectl taint nodes "$n" "${key}-" || true
+                done
+                echo "[unlabel] ${n} dedicated-"
+                kubectl label node "$n" dedicated- || true
+              done
+              echo "[done] taints/labels removidos."

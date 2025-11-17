@@ -1,0 +1,50 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: r3a-apply-taints
+  namespace: r3a
+spec:
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      serviceAccountName: r3a-node-admin
+      restartPolicy: Never
+      # se seu cluster é single node com taint de control-plane:
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: ""
+      tolerations:
+        - key: "node-role.kubernetes.io/control-plane"
+          operator: "Exists"
+          effect: "NoSchedule"
+      containers:
+        - name: kubectl
+          image: bitnami/kubectl:1.28
+          imagePullPolicy: IfNotPresent
+          env:
+            # ajuste aqui os nós que receberão o taint/label
+            - name: NODE_LIST
+              value: "worker-node-1"
+            # taints adicionais separados por vírgula, se quiser
+            - name: TAINTS
+              value: "dedicated=r3a:NoSchedule"
+            # aplique também o taint padrão de control-plane? (opcional)
+            - name: ALSO_TAINT_CONTROL_PLANE
+              value: "false"
+          command: ["/bin/sh","-lc"]
+          args:
+            - |
+              set -euo pipefail
+              IFS=',' read -r -a NODES <<< "${NODE_LIST}"
+              for n in "${NODES[@]}"; do
+                echo "[label] ${n} dedicated=r3a"
+                kubectl label node "$n" dedicated=r3a --overwrite
+                for t in ${TAINTS//,/ }; do
+                  echo "[taint] ${n} ${t}"
+                  kubectl taint nodes "$n" "$t" --overwrite
+                done
+                if [ "${ALSO_TAINT_CONTROL_PLANE:-false}" = "true" ]; then
+                  echo "[taint] ${n} node-role.kubernetes.io/control-plane=:NoSchedule"
+                  kubectl taint nodes "$n" node-role.kubernetes.io/control-plane=:NoSchedule --overwrite || true
+                fi
+              done
+              echo "[done] taints/labels aplicados."

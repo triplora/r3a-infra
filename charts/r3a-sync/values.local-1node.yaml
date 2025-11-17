@@ -1,0 +1,90 @@
+image:
+  repository: r3a-runner
+  tag: latest
+  pullPolicy: IfNotPresent
+
+serviceAccount:
+  create: true
+  name: ""
+
+rbac:
+  create: true
+
+scheduling:
+  timezone: "America/Sao_Paulo"
+
+  # *** Single-node com taint de control-plane ***
+  nodeSelector:
+    node-role.kubernetes.io/control-plane: ""
+
+  tolerations:
+    - key: "node-role.kubernetes.io/control-plane"
+      operator: "Exists"
+      effect: "NoSchedule"
+
+  # Ajuste o IP do seu host que responde por ragnarak.r3a.offline
+  hostAliases:
+    #- ip: "192.168.0.70"
+    #  hostnames: ["ragnarak.r3a.offline","postgres.r3a.svc.cluster.local"]
+
+resources:
+  requests:
+    cpu: "100m"
+    memory: "192Mi"
+  limits:
+    cpu: "800m"
+    memory: "768Mi"
+
+# Se um PVC de cache for útil, habilite e aponte o claim
+pvc:
+  enabled: false
+  claimName: ""
+  mountPath: "/app/cache"
+
+jobDefaults:
+  backoffLimit: 0
+  activeDeadlineSeconds: 5400
+  restartPolicy: Never
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 180
+  # Opcional: apaga pods finalizados após Xs; remova se o chart não suportar
+  ttlSecondsAfterFinished: 120
+
+env:
+  useConfigMap: false
+  configMapName: r3a-sync-env
+
+  # Caminho dos módulos dentro da imagem
+  PYTHONPATH: "/app"
+
+  # *** ATENÇÃO: se sua senha tem caracteres especiais (@, %, #, etc) faça percent-encode
+  # Ex.: 'minha@senha' -> 'minha%40senha'
+  DB_URL: "postgresql+psycopg2://change_user:change_pass@change_host:5432/trade"
+
+  # Força período automático (jobs “now” usam começo do dia/mês conforme script)
+  AUTO_PERIOD_DATE: "true"
+
+  # Símbolos fixos apenas para o CronJob 1m-top (opcional)
+  TOP_SYMBOLS: "BTC/USDT,SOL/USDT"
+
+  # Intervalos usados por cada CronJob
+  SYNC_INTERVALS:
+    oneMinute: "1m"
+    oneMinuteTop: "1m"
+    fifteenMinutes: "15m"
+    oneHour: "1h"
+    oneDay: "1d"
+
+binance:
+  useSecret: false
+  secretName: r3a-binance
+  apiKey: ""
+  apiSecret: ""
+
+# Schedules dos CronJobs
+schedules:
+  oneMinute: "* * * * *"
+  oneMinuteTop: "*/1 * * * *"
+  fifteenMinutes: "*/15 * * * *"
+  oneHour: "0 * * * *"
+  oneDay: "0 2 * * *"

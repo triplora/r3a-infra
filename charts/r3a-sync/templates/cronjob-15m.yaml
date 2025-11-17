@@ -1,0 +1,34 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: r3a-sync-15m
+  labels:
+    app.kubernetes.io/name: r3a-sync
+spec:
+  schedule: {{ .Values.schedules.m1 | quote }}
+  concurrencyPolicy: {{ .Values.job.concurrencyPolicy }}
+  successfulJobsHistoryLimit: {{ .Values.job.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ .Values.job.failedJobsHistoryLimit }}
+  startingDeadlineSeconds: {{ .Values.job.startingDeadlineSeconds }}
+  suspend: {{ .Values.job.suspend }}
+  jobTemplate:
+    spec:
+      backoffLimit: {{ .Values.job.backoffLimit }}
+      activeDeadlineSeconds: {{ .Values.job.activeDeadlineSeconds }}
+      ttlSecondsAfterFinished: {{ .Values.job.ttlSecondsAfterFinished }}
+      template:
+        spec:
+          {{ include "r3a-sync.podSpec" . | nindent 10 }}
+          containers:
+            - name: runner
+              image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy | default "IfNotPresent" }}
+              command: ["/bin/sh","-lc"]
+              args:
+                - >
+                  echo "[RUN] sync_ohlcv_job_v3.py (15m)" &&
+                  export SYNC_INTERVALS="15m" SYNC_INTERVAL="15m" &&
+                  python infra/runner/runner_scripts/sync_ohlcv_job_v3.py &&
+                  echo "[RUN] health_check_pair_scanner.py" &&
+                  python infra/runner/runner_scripts/health_check_pair_scanner.py --quick
+              {{ include "r3a-sync.envFrom" . | nindent 14 }}

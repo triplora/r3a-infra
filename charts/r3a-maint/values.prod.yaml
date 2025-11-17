@@ -1,0 +1,68 @@
+# infra/runner/charts/r3a-maint/values.prod.yaml
+image:
+  repository: ghcr.io/triplora/r3a-runner
+  tag: "2025-11-16a"
+  pullPolicy: IfNotPresent
+imagePullSecrets:
+  - name: r3a-regcred
+serviceAccount:
+  create: false
+  name: r3a-sync-sa
+secretRefs:
+  db: r3a-db
+waitDb:
+  enabled: true
+  image: postgres:16-alpine
+schedule: "15 * * * *"
+concurrencyPolicy: Forbid
+successfulJobsHistoryLimit: 1
+failedJobsHistoryLimit: 2
+startingDeadlineSeconds: 300
+backoffLimit: 1
+activeDeadlineSeconds: 1200
+ttlSecondsAfterFinished: 1800
+suspend: false
+janitor:
+  enabled: true
+  schedule: "*/5 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
+  startingDeadlineSeconds: 120
+  backoffLimit: 0
+  activeDeadlineSeconds: 240
+  ttlSecondsAfterFinished: 900
+  suspend: false
+  image: "" # herda image.repository:tag
+  imagePullPolicy: ""
+  targetNamespace: r3a
+  deleteAfterSeconds: 900
+  protectedSelectors:
+    - "app.kubernetes.io/name=postgres"
+    - "app.kubernetes.io/instance=ingress-nginx"
+refreshLastTs:
+  enabled: true
+  schedule: "1-59/5 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
+  startingDeadlineSeconds: 120
+  lookback: "1 day" # reduz janela
+  backoffLimit: 0
+  activeDeadlineSeconds: 90
+  ttlSecondsAfterFinished: 300
+  suspend: false
+vacuumHot:
+  enabled: true
+  schedule: "10 * * * *" # 10' de cada hora
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
+  startingDeadlineSeconds: 300
+  backoffLimit: 0
+  activeDeadlineSeconds: 1200
+  ttlSecondsAfterFinished: 1800
+  suspend: false
+  analyzeOnly: true
+env:
+  MAINT_MAX_OPS: "100"
